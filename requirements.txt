@@ -1,2 +1,4 @@
 gymnasium
 numpy
+stable-baselines3[extra]
+sb3-contrib

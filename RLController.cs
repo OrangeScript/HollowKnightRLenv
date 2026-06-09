@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Threading;
 using Modding;
 using UnityEngine;
@@ -8,6 +9,11 @@ namespace HollowKnightRLBridge
 {
     internal class RLController : MonoBehaviour
     {
+        private const int ResetWarmupFrames = 20;
+        private const int ResetCombatReadyMaxFrames = 600;
+        private const string DefaultGodhomeEntryGate = "door_dreamEnter";
+        private const float HeroArenaMaxDistance = 80f;
+
         private readonly object lockObj = new object();
         private readonly Queue<PendingCommand> commandQueue = new Queue<PendingCommand>();
 
@@ -227,11 +233,6 @@ namespace HollowKnightRLBridge
             actionExecutor.Clear();
             finished.Result = latestSnapshot;
             finished.Done.Set();
-
-            if (IsHeroDead())
-            {
-                StartAutoDeathReset();
-            }
         }
 
         private void CompleteReset(PendingCommand command)
@@ -286,6 +287,7 @@ namespace HollowKnightRLBridge
                 }
 
                 command.TargetScene = scene;
+                command.EntryGate = ResolveEntryGate(command.EntryGate, scene);
                 lastResetScene = scene;
                 lastEntryGate = command.EntryGate;
                 command.InfoNote = command.HardReset ? "hard_reset" : "load_scene";
@@ -322,7 +324,25 @@ namespace HollowKnightRLBridge
             }
 
             sceneReadyFrames++;
-            if (sceneReadyFrames < 20)
+            if (sceneReadyFrames < ResetWarmupFrames)
+            {
+                return;
+            }
+
+            if (command.Refill || IsHeroDead())
+            {
+                stateReader.ReviveHeroForReset();
+            }
+
+            EnsureBossArenaPlacement();
+
+            bool isTransitioning = IsBossSceneTransitioning();
+            if (isTransitioning && sceneReadyFrames < ResetWarmupFrames + ResetCombatReadyMaxFrames)
+            {
+                return;
+            }
+
+            if ((!IsCombatReady() || !HasLiveEnemy() || !IsHeroNearBossArena()) && sceneReadyFrames < ResetWarmupFrames + ResetCombatReadyMaxFrames)
             {
                 return;
             }
@@ -341,6 +361,10 @@ namespace HollowKnightRLBridge
             latestSnapshot.Info["hard_reset"] = command.HardReset;
             latestSnapshot.Info["target_scene"] = command.TargetScene ?? string.Empty;
             latestSnapshot.Info["entry_gate"] = command.EntryGate ?? string.Empty;
+            latestSnapshot.Info["reset_wait_frames"] = sceneReadyFrames;
+            latestSnapshot.Info["reset_combat_ready"] = IsCombatReady();
+            latestSnapshot.Info["reset_enemy_ready"] = HasLiveEnemy();
+            latestSnapshot.Info["reset_hero_arena_ready"] = IsHeroNearBossArena();
 
             command.Result = latestSnapshot;
             command.Done.Set();
@@ -371,34 +395,166 @@ namespace HollowKnightRLBridge
             return gm != null ? gm.sceneName : string.Empty;
         }
 
-        private void StartAutoDeathReset()
+        private static string ResolveEntryGate(string entryGate, string scene)
         {
-            if (activeReset != null)
+            if (!string.IsNullOrEmpty(entryGate))
             {
-                return;
+                return entryGate;
             }
 
+            return IsGodhomeBossScene(scene) ? DefaultGodhomeEntryGate : entryGate;
+        }
+
+        private static bool IsGodhomeBossScene(string scene)
+        {
+            return !string.IsNullOrEmpty(scene) && scene.StartsWith("GG_", StringComparison.Ordinal);
+        }
+
+        private static void EnsureBossArenaPlacement()
+        {
             GameManager gm = GameManager.instance;
-            string scene = !string.IsNullOrEmpty(lastResetScene)
-                ? lastResetScene
-                : gm != null ? gm.sceneName : string.Empty;
-
-            if (string.IsNullOrEmpty(scene))
+            HeroController hero = HeroController.instance;
+            if (gm == null || hero == null || !IsGodhomeBossScene(gm.sceneName))
             {
                 return;
             }
 
-            PendingCommand command = new PendingCommand
+            Transform spawn = FindBossHeroSpawn();
+            if (spawn == null)
             {
-                Type = RLCommandType.Reset,
-                Refill = true,
-                HardReset = true,
-                TargetScene = scene,
-                EntryGate = lastEntryGate,
-                InfoNote = "auto_death_reset"
-            };
+                return;
+            }
 
-            StartSceneReset(command);
+            Vector3 heroPos = hero.transform.position;
+            Vector3 spawnPos = spawn.position;
+            bool shouldMove = IsHeroOffMap(heroPos) || Vector2.Distance(new Vector2(heroPos.x, heroPos.y), new Vector2(spawnPos.x, spawnPos.y)) > HeroArenaMaxDistance;
+            if (!shouldMove)
+            {
+                return;
+            }
+
+            try
+            {
+                hero.transform.position = spawnPos;
+                Rigidbody2D rb = hero.GetComponent<Rigidbody2D>();
+                if (rb != null)
+                {
+                    rb.velocity = Vector2.zero;
+                    rb.angularVelocity = 0f;
+                }
+
+                InvokeHeroVoid(hero, "ResetMotion");
+                hero.ResetAirMoves();
+                hero.RegainControl();
+                hero.AcceptInput();
+                PositionCameraToHero();
+            }
+            catch
+            {
+            }
+        }
+
+        private static bool IsHeroNearBossArena()
+        {
+            GameManager gm = GameManager.instance;
+            HeroController hero = HeroController.instance;
+            if (gm == null || !IsGodhomeBossScene(gm.sceneName))
+            {
+                return true;
+            }
+
+            if (hero == null)
+            {
+                return false;
+            }
+
+            Transform spawn = FindBossHeroSpawn();
+            if (spawn == null)
+            {
+                return true;
+            }
+
+            Vector3 heroPos = hero.transform.position;
+            Vector3 spawnPos = spawn.position;
+            return !IsHeroOffMap(heroPos) && Vector2.Distance(new Vector2(heroPos.x, heroPos.y), new Vector2(spawnPos.x, spawnPos.y)) <= HeroArenaMaxDistance;
+        }
+
+        private static Transform FindBossHeroSpawn()
+        {
+            try
+            {
+                BossSceneController controller = BossSceneController.Instance;
+                if (controller == null)
+                {
+                    controller = UnityEngine.Object.FindObjectOfType<BossSceneController>();
+                }
+
+                if (controller != null && controller.heroSpawn != null)
+                {
+                    return controller.heroSpawn;
+                }
+            }
+            catch
+            {
+            }
+
+            string[] names = { "Hero Spawn", "heroSpawn", "HeroSpawn" };
+            foreach (string name in names)
+            {
+                try
+                {
+                    GameObject obj = GameObject.Find(name);
+                    if (obj != null)
+                    {
+                        return obj.transform;
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            return null;
+        }
+
+        private static bool IsHeroOffMap(Vector3 heroPos)
+        {
+            return Mathf.Abs(heroPos.x) > 5000f || Mathf.Abs(heroPos.y) > 5000f;
+        }
+
+        private static void InvokeHeroVoid(HeroController hero, string methodName)
+        {
+            if (hero == null)
+            {
+                return;
+            }
+
+            try
+            {
+                MethodInfo method = typeof(HeroController).GetMethod(methodName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (method != null && method.ReturnType == typeof(void) && method.GetParameters().Length == 0)
+                {
+                    method.Invoke(hero, null);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private static void PositionCameraToHero()
+        {
+            try
+            {
+                GameManager gm = GameManager.instance;
+                if (gm != null && gm.cameraCtrl != null)
+                {
+                    gm.cameraCtrl.PositionToHero(true);
+                }
+            }
+            catch
+            {
+            }
         }
 
         private static bool IsHeroDead()
@@ -406,6 +562,92 @@ namespace HollowKnightRLBridge
             PlayerData pd = PlayerData.instance;
             HeroController hero = HeroController.instance;
             return (pd != null && pd.health <= 0) || (hero != null && hero.cState.dead);
+        }
+
+        private static bool IsCombatReady()
+        {
+            HeroController hero = HeroController.instance;
+            return hero != null && SafeHeroBool(hero.CanInput) && InvokeHeroBool(hero, "CanTakeDamage") && !IsBossSceneTransitioning();
+        }
+
+        private static bool SafeHeroBool(Func<bool> func)
+        {
+            try
+            {
+                return func();
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool InvokeHeroBool(HeroController hero, string methodName)
+        {
+            if (hero == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                MethodInfo method = typeof(HeroController).GetMethod(methodName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                return method != null && method.ReturnType == typeof(bool) && method.GetParameters().Length == 0 && (bool)method.Invoke(hero, null);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool IsBossSceneTransitioning()
+        {
+            try
+            {
+                return BossSceneController.IsTransitioning;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool HasLiveEnemy()
+        {
+            try
+            {
+                HealthManager[] managers = UnityEngine.Object.FindObjectsOfType<HealthManager>();
+                foreach (HealthManager manager in managers)
+                {
+                    if (manager == null || manager.gameObject == null || !manager.gameObject.activeInHierarchy)
+                    {
+                        continue;
+                    }
+
+                    if (manager.hp <= 0 || manager.isDead)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        if (manager.GetIsDead())
+                        {
+                            continue;
+                        }
+                    }
+                    catch
+                    {
+                    }
+
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+
+            return false;
         }
 
         private static bool IsSceneReady(string targetScene)

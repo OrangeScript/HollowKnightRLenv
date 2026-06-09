@@ -45,7 +45,7 @@ Important semantics:
 - `down_attack` is only available while airborne. On ground its mask is 0 and the mod will not inject attack.
 - `spell` is the quick spell/cast action.
 - `focus_heal` is the heal/focus hold action.
-- If the hero dies, the mod starts a scene reload for the active boss scene to avoid vanilla death/respawn corrupting a training episode.
+- If the hero dies, the current step returns `done=true`. The mod does not reload the scene in the background; call `env.reset()` to start the next episode.
 
 ## Frame Timing
 
@@ -54,6 +54,8 @@ Important semantics:
 With `step_frames=1`, an action is injected during the hero update phase, kept through the frame so vanilla input code can read it, then the result is returned after that frame in `LateUpdate`. At 60 FPS this is roughly 16.7 ms per environment step; at 30 FPS it is roughly 33.3 ms.
 
 For training, prefer a stable game frame rate. Lock the game externally to 60 FPS first, and do not change Unity physics timestep unless you have a specific reason.
+
+On reset, the bridge reloads the requested boss scene, waits for the scene transition to finish, restores hero control/damage state, and only returns when combat is ready or a safety timeout is reached. Godhome boss scenes (`GG_*`) default to the vanilla dream entry gate. The reset info includes `reset_combat_ready`, `reset_enemy_ready`, `reset_hero_arena_ready`, and `reset_wait_frames`.
 
 ## Python
 
@@ -130,6 +132,51 @@ obs, reward, terminated, truncated, info = env.step([2, 1, 0, 0, 1, 0, 0])
 ```
 
 For Hollow Knight, `multidiscrete` is the preferred training mode because several actions are naturally simultaneous. Discrete mode is mainly a small baseline action table.
+
+## Training
+
+Install training dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Recommended first run:
+
+```bash
+python train_rl.py --boss-scene GG_Hornet_2 --timesteps 1000000
+```
+
+The default training algorithm is `recurrent_ppo` from SB3-Contrib. It uses the `MultiDiscrete` action space and an LSTM policy so the agent can remember short boss patterns and its own recent movement rhythm. If you want the simpler baseline:
+
+```bash
+python train_rl.py --algo ppo --boss-scene GG_Hornet_2 --timesteps 1000000
+```
+
+Outputs are written under `runs/<run_name>/`:
+
+```text
+final_model.zip
+vecnormalize.pkl
+config.json
+checkpoints/
+tensorboard/
+monitor/
+```
+
+Resume training:
+
+```bash
+python train_rl.py --resume runs/GG_Hornet_2_recurrent_ppo_xxx/final_model.zip --timesteps 500000
+```
+
+Run a trained policy:
+
+```bash
+python play_rl.py --model runs/GG_Hornet_2_recurrent_ppo_xxx/final_model.zip --episodes 3
+```
+
+Use only one live Hollow Knight connection at a time. Evaluation is a separate script instead of an in-training `EvalCallback` because the mod server currently accepts one TCP client.
 
 ## Protocol
 

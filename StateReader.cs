@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEngine;
 
 namespace HollowKnightRLBridge
@@ -20,6 +21,11 @@ namespace HollowKnightRLBridge
         private int episodeSteps;
 
         public int EpisodeSteps => episodeSteps;
+
+        public void ReviveHeroForReset()
+        {
+            RefillHero();
+        }
 
         public void ResetEpisode(bool refillHero)
         {
@@ -182,6 +188,7 @@ namespace HollowKnightRLBridge
         {
             PlayerData pd = PlayerData.instance;
             GameManager gm = GameManager.instance;
+            HeroController hero = HeroController.instance;
             bool heroDead = pd != null && pd.health <= 0;
             bool bossDead = enemies.WasTracked && enemies.Count == 0;
             Dictionary<string, object> info = new Dictionary<string, object>
@@ -205,6 +212,19 @@ namespace HollowKnightRLBridge
                 ["hero_max_health"] = pd != null ? pd.maxHealth : 0,
                 ["hero_soul"] = pd != null ? pd.MPCharge : 0,
                 ["hero_dead"] = heroDead,
+                ["hero_cstate_dead"] = hero != null && hero.cState.dead,
+                ["hero_cstate_recoiling"] = hero != null && hero.cState.recoiling,
+                ["hero_cstate_hazard_death"] = hero != null && hero.cState.hazardDeath,
+                ["hero_invulnerable"] = hero != null && hero.cState.invulnerable,
+                ["hero_accepting_input"] = ReadBoolField(hero, "acceptingInput"),
+                ["hero_control_relinquished"] = ReadBoolField(hero, "controlReqlinquished"),
+                ["hero_enter_without_input"] = ReadBoolField(hero, "enterWithoutInput"),
+                ["hero_transition_state"] = ReadFieldString(hero, "transitionState"),
+                ["hero_take_no_damage"] = ReadBoolField(hero, "takeNoDamage"),
+                ["hero_damage_mode"] = ReadFieldString(hero, "damageMode"),
+                ["hero_can_take_damage"] = InvokeBoolIfExists(hero, "CanTakeDamage"),
+                ["hero_pd_is_invincible"] = ReadPlayerDataBool(pd, "isInvincible"),
+                ["boss_scene_transitioning"] = IsBossSceneTransitioning(),
                 ["boss_count"] = enemies.Count,
                 ["boss_total_hp"] = enemies.TotalHp,
                 ["boss_initial_total_hp"] = initialEnemyTotalHp,
@@ -411,16 +431,291 @@ namespace HollowKnightRLBridge
                 pd.MPCharge = Math.Max(pd.MPCharge, pd.maxMP > 0 ? pd.maxMP : 99);
                 pd.MPReserve = Math.Max(pd.MPReserve, pd.MPReserveMax);
                 pd.healthBlue = 0;
+                InvokeStringBoolIfExists(pd, "SetBool", "isInvincible", false);
 
                 if (hero != null)
                 {
                     hero.MaxHealth();
                     hero.SetMPCharge(pd.MPCharge);
                     hero.ResetAirMoves();
+                    RestoreHeroDamageState(hero);
                 }
             }
             catch
             {
+            }
+        }
+
+        private static void RestoreHeroDamageState(HeroController hero)
+        {
+            if (hero == null)
+            {
+                return;
+            }
+
+            try
+            {
+                hero.cState.dead = false;
+                hero.cState.invulnerable = false;
+                hero.cState.recoiling = false;
+                hero.cState.hazardDeath = false;
+                hero.cState.hazardRespawning = false;
+            }
+            catch
+            {
+            }
+
+            InvokeIfExists(hero, "EndTakeNoDamage");
+            InvokeIfExists(hero, "CancelParryInvuln");
+            InvokeIfExists(hero, "stopInvulnerablePulse");
+            InvokeIfExists(hero, "RegainControl");
+            InvokeIfExists(hero, "AcceptInput");
+            InvokeBoolArgIfExists(hero, "EnterWithoutInput", false);
+            InvokeBoolArgIfExists(hero, "SetTakeNoDamage", false);
+            SetFieldIfExists(hero, "acceptingInput", true);
+            SetFieldIfExists(hero, "controlReqlinquished", false);
+            SetFieldIfExists(hero, "enterWithoutInput", false);
+            SetFieldIfExists(hero, "takeNoDamage", false);
+            SetFieldIfExists(hero, "damagedThisFrame", false);
+            SetFieldIfExists(hero, "parryInvulnTimer", 0f);
+            SetFieldIfExists(hero, "invulnerableTime", 0f);
+            SetEnumOrIntFieldIfExists(hero, "transitionState", "WAITING_TO_TRANSITION", 0);
+            SetDamageModeFull(hero);
+        }
+
+        private static void SetDamageModeFull(HeroController hero)
+        {
+            FieldInfo field = FindField(hero, "damageMode");
+            if (field != null)
+            {
+                SetMemberValue(hero, field.FieldType, value => field.SetValue(hero, value), "FULL_DAMAGE", 0);
+            }
+
+            MethodInfo method = FindMethod(hero, "SetDamageMode");
+            if (method == null)
+            {
+                return;
+            }
+
+            ParameterInfo[] parameters = method.GetParameters();
+            if (parameters.Length != 1)
+            {
+                return;
+            }
+
+            SetMemberValue(hero, parameters[0].ParameterType, value => method.Invoke(hero, new[] { value }), "FULL_DAMAGE", 0);
+        }
+
+        private static void SetFieldIfExists(object target, string fieldName, object value)
+        {
+            FieldInfo field = FindField(target, fieldName);
+            if (field == null)
+            {
+                return;
+            }
+
+            try
+            {
+                field.SetValue(target, value);
+            }
+            catch
+            {
+            }
+        }
+
+        private static void InvokeIfExists(object target, string methodName)
+        {
+            MethodInfo method = FindMethod(target, methodName);
+            if (method == null || method.GetParameters().Length != 0)
+            {
+                return;
+            }
+
+            try
+            {
+                method.Invoke(target, null);
+            }
+            catch
+            {
+            }
+        }
+
+        private static void InvokeBoolArgIfExists(object target, string methodName, bool value)
+        {
+            MethodInfo method = FindMethod(target, methodName);
+            if (method == null)
+            {
+                return;
+            }
+
+            ParameterInfo[] parameters = method.GetParameters();
+            if (parameters.Length != 1 || parameters[0].ParameterType != typeof(bool))
+            {
+                return;
+            }
+
+            try
+            {
+                method.Invoke(target, new object[] { value });
+            }
+            catch
+            {
+            }
+        }
+
+        private static void InvokeStringBoolIfExists(object target, string methodName, string key, bool value)
+        {
+            MethodInfo method = FindMethod(target, methodName);
+            if (method == null)
+            {
+                return;
+            }
+
+            ParameterInfo[] parameters = method.GetParameters();
+            if (parameters.Length != 2 || parameters[0].ParameterType != typeof(string) || parameters[1].ParameterType != typeof(bool))
+            {
+                return;
+            }
+
+            try
+            {
+                method.Invoke(target, new object[] { key, value });
+            }
+            catch
+            {
+            }
+        }
+
+        private static void SetEnumOrIntFieldIfExists(object target, string fieldName, string enumName, int intValue)
+        {
+            FieldInfo field = FindField(target, fieldName);
+            if (field == null)
+            {
+                return;
+            }
+
+            SetMemberValue(target, field.FieldType, value => field.SetValue(target, value), enumName, intValue);
+        }
+
+        private static FieldInfo FindField(object target, string fieldName)
+        {
+            if (target == null)
+            {
+                return null;
+            }
+
+            return target.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        }
+
+        private static MethodInfo FindMethod(object target, string methodName)
+        {
+            if (target == null)
+            {
+                return null;
+            }
+
+            return target.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        }
+
+        private static void SetMemberValue(object target, Type valueType, Action<object> setter, string enumName, int intValue)
+        {
+            try
+            {
+                if (valueType.IsEnum)
+                {
+                    setter(Enum.Parse(valueType, enumName));
+                }
+                else if (valueType == typeof(int))
+                {
+                    setter(intValue);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private static bool? ReadBoolField(object target, string fieldName)
+        {
+            FieldInfo field = FindField(target, fieldName);
+            if (field == null || field.FieldType != typeof(bool))
+            {
+                return null;
+            }
+
+            try
+            {
+                return (bool)field.GetValue(target);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string ReadFieldString(object target, string fieldName)
+        {
+            FieldInfo field = FindField(target, fieldName);
+            if (field == null)
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                object value = field.GetValue(target);
+                return value != null ? value.ToString() : string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        private static bool? InvokeBoolIfExists(object target, string methodName)
+        {
+            MethodInfo method = FindMethod(target, methodName);
+            if (method == null || method.ReturnType != typeof(bool) || method.GetParameters().Length != 0)
+            {
+                return null;
+            }
+
+            try
+            {
+                return (bool)method.Invoke(target, null);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool? ReadPlayerDataBool(PlayerData pd, string key)
+        {
+            if (pd == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                return pd.GetBool(key);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool IsBossSceneTransitioning()
+        {
+            try
+            {
+                return BossSceneController.IsTransitioning;
+            }
+            catch
+            {
+                return false;
             }
         }
 
