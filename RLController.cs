@@ -14,9 +14,13 @@ namespace HollowKnightRLBridge
         private StateReader stateReader;
         private ActionExecutor actionExecutor;
         private PendingCommand activeStep;
+        private PendingCommand activeReset;
         private int activeFramesRemaining;
+        private int sceneReadyFrames;
         private int lastFrame = -1;
         private int lastAction;
+        private string lastResetScene;
+        private string lastEntryGate;
         private RLStepResult latestSnapshot;
 
         private void Awake()
@@ -63,13 +67,15 @@ namespace HollowKnightRLBridge
             return WaitForCommand(command, timeoutMs);
         }
 
-        public RLStepResult ResetEpisode(bool refill, bool hardReset, int timeoutMs)
+        public RLStepResult ResetEpisode(bool refill, bool hardReset, string targetScene, string entryGate, int timeoutMs)
         {
             PendingCommand command = new PendingCommand
             {
                 Type = RLCommandType.Reset,
                 Refill = refill,
-                HardReset = hardReset
+                HardReset = hardReset,
+                TargetScene = targetScene,
+                EntryGate = entryGate
             };
 
             Enqueue(command);
@@ -99,6 +105,12 @@ namespace HollowKnightRLBridge
             if (activeStep != null)
             {
                 TickActiveStep();
+                return;
+            }
+
+            if (activeReset != null)
+            {
+                TickActiveReset();
                 return;
             }
 
@@ -164,6 +176,11 @@ namespace HollowKnightRLBridge
             latestSnapshot = stateReader.ReadStepResult(availability, mask, lastAction);
             finished.Result = latestSnapshot;
             finished.Done.Set();
+
+            if (IsHeroDead())
+            {
+                StartAutoDeathReset();
+            }
         }
 
         private void CompleteReset(PendingCommand command)
@@ -172,19 +189,14 @@ namespace HollowKnightRLBridge
             activeFramesRemaining = 0;
             lastAction = 0;
             actionExecutor.Clear();
-            stateReader.ResetEpisode(command.Refill);
 
-            latestSnapshot = MakeSnapshot();
-            latestSnapshot.Info["hard_reset"] = command.HardReset;
-
-            if (command.HardReset)
+            if (ShouldLoadScene(command))
             {
-                latestSnapshot.Info["hard_reset_note"] = "Current scene reload requested.";
-                ReloadCurrentScene();
+                StartSceneReset(command);
+                return;
             }
 
-            command.Result = latestSnapshot;
-            command.Done.Set();
+            FinishReset(command, "soft_reset");
         }
 
         private void CompleteInfo(PendingCommand command)
@@ -201,19 +213,173 @@ namespace HollowKnightRLBridge
             return stateReader.ReadSnapshot(availability, mask, lastAction);
         }
 
-        private void ReloadCurrentScene()
+        private void StartSceneReset(PendingCommand command)
         {
+            activeReset = command;
+            sceneReadyFrames = 0;
+
             try
             {
                 GameManager gm = GameManager.instance;
-                if (gm != null && !string.IsNullOrEmpty(gm.sceneName))
+                if (gm == null)
                 {
-                    gm.LoadScene(gm.sceneName);
+                    throw new InvalidOperationException("GameManager is not ready.");
+                }
+
+                string scene = GetRequestedScene(command, gm);
+                if (string.IsNullOrEmpty(scene))
+                {
+                    throw new InvalidOperationException("No target scene is available.");
+                }
+
+                command.TargetScene = scene;
+                lastResetScene = scene;
+                lastEntryGate = command.EntryGate;
+                command.InfoNote = command.HardReset ? "hard_reset" : "load_scene";
+
+                if (!string.IsNullOrEmpty(command.EntryGate))
+                {
+                    gm.ChangeToScene(scene, command.EntryGate, 0f);
+                }
+                else
+                {
+                    gm.LoadScene(scene);
+                }
+            }
+            catch (Exception e)
+            {
+                activeReset = null;
+                command.Error = e.ToString();
+                command.Done.Set();
+            }
+        }
+
+        private void TickActiveReset()
+        {
+            PendingCommand command = activeReset;
+            if (command == null)
+            {
+                return;
+            }
+
+            if (!IsSceneReady(command.TargetScene))
+            {
+                sceneReadyFrames = 0;
+                return;
+            }
+
+            sceneReadyFrames++;
+            if (sceneReadyFrames < 20)
+            {
+                return;
+            }
+
+            activeReset = null;
+            FinishReset(command, command.InfoNote ?? "load_scene");
+        }
+
+        private void FinishReset(PendingCommand command, string resetMode)
+        {
+            actionExecutor.Clear();
+            stateReader.ResetEpisode(command.Refill);
+
+            latestSnapshot = MakeSnapshot();
+            latestSnapshot.Info["reset_mode"] = resetMode;
+            latestSnapshot.Info["hard_reset"] = command.HardReset;
+            latestSnapshot.Info["target_scene"] = command.TargetScene ?? string.Empty;
+            latestSnapshot.Info["entry_gate"] = command.EntryGate ?? string.Empty;
+
+            command.Result = latestSnapshot;
+            command.Done.Set();
+        }
+
+        private static bool ShouldLoadScene(PendingCommand command)
+        {
+            if (command == null)
+            {
+                return false;
+            }
+
+            if (!string.IsNullOrEmpty(command.TargetScene))
+            {
+                return true;
+            }
+
+            return command.HardReset || IsHeroDead();
+        }
+
+        private static string GetRequestedScene(PendingCommand command, GameManager gm)
+        {
+            if (!string.IsNullOrEmpty(command.TargetScene))
+            {
+                return command.TargetScene;
+            }
+
+            return gm != null ? gm.sceneName : string.Empty;
+        }
+
+        private void StartAutoDeathReset()
+        {
+            if (activeReset != null)
+            {
+                return;
+            }
+
+            GameManager gm = GameManager.instance;
+            string scene = !string.IsNullOrEmpty(lastResetScene)
+                ? lastResetScene
+                : gm != null ? gm.sceneName : string.Empty;
+
+            if (string.IsNullOrEmpty(scene))
+            {
+                return;
+            }
+
+            PendingCommand command = new PendingCommand
+            {
+                Type = RLCommandType.Reset,
+                Refill = true,
+                HardReset = true,
+                TargetScene = scene,
+                EntryGate = lastEntryGate,
+                InfoNote = "auto_death_reset"
+            };
+
+            StartSceneReset(command);
+        }
+
+        private static bool IsHeroDead()
+        {
+            PlayerData pd = PlayerData.instance;
+            HeroController hero = HeroController.instance;
+            return (pd != null && pd.health <= 0) || (hero != null && hero.cState.dead);
+        }
+
+        private static bool IsSceneReady(string targetScene)
+        {
+            GameManager gm = GameManager.instance;
+            if (gm == null || HeroController.instance == null)
+            {
+                return false;
+            }
+
+            if (!string.IsNullOrEmpty(targetScene) && gm.sceneName != targetScene)
+            {
+                return false;
+            }
+
+            try
+            {
+                if (gm.IsInSceneTransition || gm.IsLoadingSceneTransition)
+                {
+                    return false;
                 }
             }
             catch
             {
             }
+
+            return true;
         }
 
         private void Enqueue(PendingCommand command)
@@ -271,6 +437,13 @@ namespace HollowKnightRLBridge
                 activeStep.Done.Set();
                 activeStep = null;
             }
+
+            if (activeReset != null)
+            {
+                activeReset.Error = error;
+                activeReset.Done.Set();
+                activeReset = null;
+            }
         }
 
         private sealed class PendingCommand
@@ -278,9 +451,12 @@ namespace HollowKnightRLBridge
             public RLCommandType Type;
             public RLActionFrame ActionFrame;
             public int ActionId;
-            public int Frames = 3;
+            public int Frames = 1;
             public bool Refill;
             public bool HardReset;
+            public string TargetScene;
+            public string EntryGate;
+            public string InfoNote;
             public RLStepResult Result;
             public string Error;
             public readonly ManualResetEventSlim Done = new ManualResetEventSlim(false);

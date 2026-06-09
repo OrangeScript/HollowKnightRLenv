@@ -44,10 +44,13 @@ class HollowKnightBossEnv(gym.Env):
         host: str = "127.0.0.1",
         port: int = 9999,
         action_mode: str = "discrete",
-        step_frames: int = 3,
-        timeout: float = 5.0,
+        step_frames: int = 1,
+        timeout: float = 20.0,
         refill_on_reset: bool = True,
         hard_reset: bool = False,
+        boss_scene: Optional[str] = None,
+        entry_gate: Optional[str] = None,
+        auto_reset: bool = False,
         legacy_gym_api: bool = False,
         connect: bool = True,
     ):
@@ -59,6 +62,8 @@ class HollowKnightBossEnv(gym.Env):
         self.timeout = float(timeout)
         self.refill_on_reset = bool(refill_on_reset)
         self.hard_reset = bool(hard_reset)
+        self.boss_scene = boss_scene
+        self.entry_gate = entry_gate
         self.legacy_gym_api = bool(legacy_gym_api)
 
         self.conn: Optional[socket.socket] = None
@@ -81,6 +86,8 @@ class HollowKnightBossEnv(gym.Env):
 
         if connect:
             self.connect()
+            if auto_reset:
+                self.reset()
 
     @property
     def action_names(self):
@@ -119,8 +126,11 @@ class HollowKnightBossEnv(gym.Env):
             "command": "reset",
             "refill": bool(options.get("refill", self.refill_on_reset)),
             "hard_reset": bool(options.get("hard_reset", self.hard_reset)),
+            "boss_scene": options.get("boss_scene", self.boss_scene),
+            "entry_gate": options.get("entry_gate", self.entry_gate),
             "timeout_ms": int(self.timeout * 1000),
         }
+        payload = {key: value for key, value in payload.items() if value is not None}
         obj = self._request(payload)
         obs, _, _, _, info = self._decode_step(obj)
 

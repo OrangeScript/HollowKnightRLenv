@@ -161,7 +161,7 @@ namespace HollowKnightRLBridge
                     case RLCommandType.Step:
                         return RLResponse.FromResult(controller.Step(request.ActionFrame, request.ActionId, request.Frames, request.TimeoutMs));
                     case RLCommandType.Reset:
-                        return RLResponse.FromResult(controller.ResetEpisode(request.Refill, request.HardReset, request.TimeoutMs));
+                        return RLResponse.FromResult(controller.ResetEpisode(request.Refill, request.HardReset, request.TargetScene, request.EntryGate, request.TimeoutMs));
                     case RLCommandType.Info:
                         return RLResponse.FromResult(controller.GetInfo(request.TimeoutMs));
                     case RLCommandType.Close:

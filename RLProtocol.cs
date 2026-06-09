@@ -19,10 +19,12 @@ namespace HollowKnightRLBridge
         public RLCommandType Command;
         public int ActionId;
         public RLActionFrame ActionFrame;
-        public int Frames = 3;
+        public int Frames = 1;
         public int TimeoutMs = 3000;
         public bool Refill = true;
         public bool HardReset;
+        public string TargetScene;
+        public string EntryGate;
 
         public static RLRequest Parse(string line)
         {
@@ -35,7 +37,7 @@ namespace HollowKnightRLBridge
 
             if (int.TryParse(line, out int action))
             {
-                return StepFromDiscrete(action, 3, 3000);
+                return StepFromDiscrete(action, 1, 3000);
             }
 
             string lower = line.ToLowerInvariant();
@@ -63,10 +65,12 @@ namespace HollowKnightRLBridge
             string commandText = ((string)obj["command"] ?? (string)obj["cmd"] ?? "step").ToLowerInvariant();
             RLRequest request = new RLRequest
             {
-                Frames = ClampInt((int?)obj["frames"] ?? (int?)obj["frame_skip"] ?? 3, 1, 60),
+                Frames = ClampInt((int?)obj["frames"] ?? (int?)obj["frame_skip"] ?? 1, 1, 60),
                 TimeoutMs = ClampInt((int?)obj["timeout_ms"] ?? 3000, 100, 60000),
                 Refill = (bool?)obj["refill"] ?? true,
-                HardReset = (bool?)obj["hard_reset"] ?? (bool?)obj["reload_scene"] ?? false
+                HardReset = (bool?)obj["hard_reset"] ?? (bool?)obj["reload_scene"] ?? false,
+                TargetScene = (string)obj["boss_scene"] ?? (string)obj["scene"] ?? (string)obj["target_scene"],
+                EntryGate = (string)obj["entry_gate"] ?? (string)obj["gate"]
             };
 
             switch (commandText)

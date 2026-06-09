@@ -1,8 +1,11 @@
+import sys
+
 from hk_gym_env import HollowKnightBossEnv
 
 
 def main():
-    env = HollowKnightBossEnv()
+    boss_scene = sys.argv[1] if len(sys.argv) > 1 else None
+    env = HollowKnightBossEnv(boss_scene=boss_scene)
     obs, info = env.reset()
     print("obs shape:", obs.shape)
     print("scene:", info.get("scene"))
@@ -11,8 +14,9 @@ def main():
     print("actions:", info.get("action_names"))
     print("mask:", env.action_mask().tolist())
     for i in range(1000):
-        obs, reward, terminated, truncated, info = env.step(15)
-    print("step:", reward, terminated, truncated, info.get("target_name"), info.get("target_hp"))
+        for j in range(len(info.get("action_names"))):
+            obs, reward, terminated, truncated, info = env.step(j)
+            print("step:", reward, terminated, truncated, info.get("target_name"), info.get("target_hp"))
     env.close()
 
 
