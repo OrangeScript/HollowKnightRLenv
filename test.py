@@ -1,48 +1,20 @@
-import gym
-from gym import spaces
-import numpy as np
-import socket
-import json
+from hk_gym_env import HollowKnightBossEnv
 
-class HKBoosEnv(gym.Env):
-    def __init__(self,host='127.0.0.1',port=9999):
-        super().__init__()
-        self.host = host
-        self.port = port
-        self.conn = socket.create_connection((host,port))
 
-        self.action_space = spaces.Discrete(12)
+def main():
+    env = HollowKnightBossEnv()
+    obs, info = env.reset()
+    print("obs shape:", obs.shape)
+    print("scene:", info.get("scene"))
+    print("can_input:", info.get("can_input"))
+    print("target:", info.get("target_name"), info.get("target_hp"))
+    print("actions:", info.get("action_names"))
+    print("mask:", env.action_mask().tolist())
+    for i in range(1000):
+        obs, reward, terminated, truncated, info = env.step(15)
+    print("step:", reward, terminated, truncated, info.get("target_name"), info.get("target_hp"))
+    env.close()
 
-        self.observation_space = spaces.Box(low=-1.0, high=1.0, shape=(32,), dtype=np.float32)
-    
-    def step(self, action):
-        self.conn.sendall(f"{action}\n".encode("utf-8"))
 
-        data = self._recv_line()
-        obj = json.loads(data)
-        obs = np.array(obj["obs"],dtype=np.float32)
-        reward = float(obj["reward"])
-        done = bool(obj["done"])
-
-        return obs,reward,done,{}
-
-    def reset(self, *, seed = None, options = None):
-        self.conn.sendall(b"reset\n")
-        data = self._recv_line()
-        obj = json.loads(data)
-        obs = np.array(obj["obs"], dtype=np.float32)
-        return obs
-    
-    def _recv_line(self):
-        buf = b""
-        while True:
-            chunk = self.conn.recv(1024)
-            if not chunk:
-                raise ConnectionError("socket closed")
-            buf += chunk
-            if b"\n" in buf:
-                line, buf = buf.split(b"\n", 1)
-                return line.decode("utf-8")
-    
-    def close(self):
-        self.conn.close()
+if __name__ == "__main__":
+    main()
