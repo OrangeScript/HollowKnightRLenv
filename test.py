@@ -15,7 +15,6 @@ def main():
     print("mask:", env.action_mask().tolist())
     obs, reward, terminated, truncated, info = env.step([1, 1, 0, 0, 0, 0, 0])
     print("step:", reward, terminated, truncated, info.get("target_name"), info.get("target_hp"))
-    print("mod_reward:", info.get("mod_reward"))
     env.close()
 
 

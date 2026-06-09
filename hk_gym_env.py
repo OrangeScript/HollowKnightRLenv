@@ -60,7 +60,6 @@ class HollowKnightBossEnv(gym.Env):
         boss_scene: Optional[str] = None,
         entry_gate: Optional[str] = None,
         auto_reset: bool = False,
-        use_python_reward: bool = True,
         reward_fn: Optional[Callable[[Dict[str, Any]], float]] = None,
         reward_weights: Optional[Dict[str, float]] = None,
         legacy_gym_api: bool = False,
@@ -76,7 +75,6 @@ class HollowKnightBossEnv(gym.Env):
         self.hard_reset = bool(hard_reset)
         self.boss_scene = boss_scene
         self.entry_gate = entry_gate
-        self.use_python_reward = bool(use_python_reward)
         self.reward_fn = reward_fn
         self.reward_weights = dict(DEFAULT_REWARD_WEIGHTS)
         if reward_weights:
@@ -200,12 +198,10 @@ class HollowKnightBossEnv(gym.Env):
         if obs.shape != (OBSERVATION_SIZE,):
             raise ValueError(f"unexpected observation shape {obs.shape}, expected {(OBSERVATION_SIZE,)}")
 
-        mod_reward = float(obj.get("reward", 0.0))
         terminated = bool(obj.get("done", False))
         truncated = bool(obj.get("truncated", False))
         info = dict(obj.get("info") or {})
-        info["mod_reward"] = mod_reward
-        reward = self._compute_reward(info) if self.use_python_reward else mod_reward
+        reward = self._compute_reward(info)
         self.last_info = info
         return obs, reward, terminated, truncated, info
 

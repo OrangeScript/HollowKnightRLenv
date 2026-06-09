@@ -2,15 +2,15 @@
 
 Local TCP bridge for Hollow Knight boss RL experiments.
 
-The mod listens on `127.0.0.1:9999`. The Python side sends actions and receives
-`obs/reward/done/info` in a Gym/Gymnasium-compatible environment.
+The mod listens on `127.0.0.1:9999`. The Python side sends actions, receives
+environment state from the mod, and computes Gym/Gymnasium rewards locally.
 
 ## Current Shape
 
 - One RL step holds an action for `step_frames` Unity frames, default `1`.
 - Observation size is `66`: 48 state features + 18 action-mask values.
 - The action mask is returned in both `obs[-18:]` and `info["action_mask"]`.
-- The mod returns state and event counters. The Python Gym env computes reward by default.
+- The mod returns state and event counters only. The Python Gym env computes all rewards.
 - `reset` clears the event baseline and can refill health/soul.
 - `hard_reset=true` asks the game to reload the current scene.
 
@@ -78,7 +78,7 @@ boss dead:    +100
 hero dead:    -100
 ```
 
-The mod reward is preserved as `info["mod_reward"]`, but the returned Gym reward is computed in Python by default. Override reward shaping without recompiling the mod:
+Override reward shaping without recompiling the mod:
 
 ```python
 def reward_fn(info):

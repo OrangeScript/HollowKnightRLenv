@@ -170,7 +170,6 @@ namespace HollowKnightRLBridge
                         {
                             Ok = true,
                             Observation = new float[StateReader.ObservationSize],
-                            Reward = 0f,
                             Done = false,
                             Truncated = false,
                             Info = new Dictionary<string, object> { ["closed"] = true }

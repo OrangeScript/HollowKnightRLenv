@@ -11,12 +11,6 @@ namespace HollowKnightRLBridge
 
         private const float PositionScale = 0.05f;
         private const float VelocityScale = 0.1f;
-        private const float TimePenalty = -0.01f;
-        private const float BossDamageReward = 0.5f;
-        private const float HeroDamagePenalty = 10f;
-        private const float HeroHealReward = 0.25f;
-        private const float WinReward = 100f;
-        private const float DeathPenalty = 100f;
 
         private readonly Dictionary<int, int> previousEnemyHp = new Dictionary<int, int>();
 
@@ -48,7 +42,7 @@ namespace HollowKnightRLBridge
         {
             EnemyReadout enemies = ReadEnemies();
             DoneReadout done = ReadDone(enemies);
-            return BuildResult(0f, done.Done, false, availability, actionMask, lastAction, enemies, 0, 0);
+            return BuildResult(done.Done, false, availability, actionMask, lastAction, enemies, 0, 0);
         }
 
         public RLStepResult ReadStepResult(ActionAvailability availability, bool[] actionMask, int lastAction)
@@ -60,36 +54,10 @@ namespace HollowKnightRLBridge
             int bossDamage = CalculateEnemyDamage(enemies);
             DoneReadout done = ReadDone(enemies);
 
-            float reward = TimePenalty;
-            if (bossDamage > 0)
-            {
-                reward += bossDamage * BossDamageReward;
-            }
-
-            if (heroDelta < 0)
-            {
-                reward += heroDelta * HeroDamagePenalty;
-            }
-            else if (heroDelta > 0)
-            {
-                reward += heroDelta * HeroHealReward;
-            }
-
-            if (done.BossDead)
-            {
-                reward += WinReward;
-            }
-
-            if (done.HeroDead)
-            {
-                reward -= DeathPenalty;
-            }
-
-            return BuildResult(reward, done.Done, false, availability, actionMask, lastAction, enemies, bossDamage, heroDelta);
+            return BuildResult(done.Done, false, availability, actionMask, lastAction, enemies, bossDamage, heroDelta);
         }
 
         private RLStepResult BuildResult(
-            float reward,
             bool done,
             bool truncated,
             ActionAvailability availability,
@@ -105,7 +73,6 @@ namespace HollowKnightRLBridge
             return new RLStepResult
             {
                 Observation = observation,
-                Reward = reward,
                 Done = done,
                 Truncated = truncated,
                 Info = info

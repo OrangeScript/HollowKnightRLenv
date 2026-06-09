@@ -209,7 +209,6 @@ namespace HollowKnightRLBridge
     internal sealed class RLStepResult
     {
         public float[] Observation;
-        public float Reward;
         public bool Done;
         public bool Truncated;
         public Dictionary<string, object> Info = new Dictionary<string, object>();
@@ -222,9 +221,6 @@ namespace HollowKnightRLBridge
 
         [JsonProperty("obs")]
         public float[] Observation;
-
-        [JsonProperty("reward")]
-        public float Reward;
 
         [JsonProperty("done")]
         public bool Done;
@@ -244,7 +240,6 @@ namespace HollowKnightRLBridge
             {
                 Ok = true,
                 Observation = result.Observation,
-                Reward = result.Reward,
                 Done = result.Done,
                 Truncated = result.Truncated,
                 Info = result.Info
@@ -257,7 +252,6 @@ namespace HollowKnightRLBridge
             {
                 Ok = false,
                 Observation = new float[StateReader.ObservationSize],
-                Reward = 0f,
                 Done = false,
                 Truncated = false,
                 Info = new Dictionary<string, object>(),
