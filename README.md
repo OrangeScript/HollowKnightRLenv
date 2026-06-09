@@ -8,11 +8,12 @@ environment state from the mod, and computes Gym/Gymnasium rewards locally.
 ## Current Shape
 
 - One RL step holds an action for `step_frames` Unity frames, default `1`.
-- Observation size is `66`: 48 state features + 18 action-mask values.
-- The action mask is returned in both `obs[-18:]` and `info["action_mask"]`.
+- Observation size is `78`: 48 base state features + 18 action-mask values + 12 boss-specific feature slots.
+- The action mask starts at `info["action_mask_feature_offset"]`. Boss features start at `info["boss_feature_offset"]`.
 - The mod returns state and event counters only. The Python Gym env computes all rewards.
 - `reset` clears the event baseline and can refill health/soul.
 - `hard_reset=true` asks the game to reload the current scene.
+- The in-game debug overlay is shown by default and can be toggled with `F8`.
 
 ## Discrete Action Space
 
@@ -133,6 +134,41 @@ obs, reward, terminated, truncated, info = env.step([2, 1, 0, 0, 1, 0, 0])
 
 For Hollow Knight, `multidiscrete` is the preferred training mode because several actions are naturally simultaneous. Discrete mode is mainly a small baseline action table.
 
+## Boss Profiles
+
+Boss-specific state is split across both sides:
+
+- C# mod side: implement `IBossStateProvider` in `BossStateProviders.cs`.
+- Python side: implement `BossProfile` in `boss_profiles.py`.
+
+The mod always returns a fixed-size observation for SB3 stability. The first 66 values are the shared state/action-mask layout. The last 12 values are boss-specific slots. The active slot names and raw debug values are returned in:
+
+```text
+info["boss_profile"]
+info["boss_feature_names"]
+info["boss_features"]
+info["boss_feature_vector"]
+```
+
+Examples already included:
+
+- `hornet`: nearest Hornet obstacle distance/delta/count.
+- `markoth`: nearest shield, weapon, and standable platform distance/delta/count.
+
+Python examples:
+
+```python
+env = HollowKnightBossEnv(boss_profile="hornet")
+env = HollowKnightBossEnv(boss_profile="markoth")
+```
+
+Smoke tests:
+
+```bash
+python test.py GG_Hornet_2 hornet
+python test.py GG_Markoth markoth
+```
+
 ## Training
 
 Install training dependencies:
@@ -144,13 +180,25 @@ pip install -r requirements.txt
 Recommended first run:
 
 ```bash
-python train_rl.py --boss-scene GG_Hornet_2 --timesteps 1000000
+python train_rl.py --boss-profile hornet --timesteps 1000000
 ```
+
+By default training wraps the environment with `TimeLimit(max_episode_steps=3600)`.
+When the limit is reached, Stable-Baselines3 ends that episode and calls
+`env.reset()` automatically. Use `--max-episode-steps 0` to disable this, or set
+a larger value if you want longer boss attempts.
 
 The default training algorithm is `recurrent_ppo` from SB3-Contrib. It uses the `MultiDiscrete` action space and an LSTM policy so the agent can remember short boss patterns and its own recent movement rhythm. If you want the simpler baseline:
 
 ```bash
-python train_rl.py --algo ppo --boss-scene GG_Hornet_2 --timesteps 1000000
+python train_rl.py --algo ppo --boss-profile hornet --timesteps 1000000
+```
+
+Boss-specific starter scripts:
+
+```bash
+python train_hornet.py --timesteps 1000000
+python train_markoth.py --timesteps 1000000
 ```
 
 Outputs are written under `runs/<run_name>/`:

@@ -7,17 +7,24 @@ namespace HollowKnightRLBridge
 {
     internal class StateReader
     {
-        public const int FeatureCount = 48;
-        public const int ObservationSize = FeatureCount + RLActionSpace.ActionCount;
+        public const int BaseFeatureCount = 48;
+        public const int FeatureCount = BaseFeatureCount;
+        public const int BossFeatureCapacity = BossStateRegistry.MaxFeatureCount;
+        public const int BossFeatureOffset = BaseFeatureCount + RLActionSpace.ActionCount;
+        public const int ObservationSize = BossFeatureOffset + BossFeatureCapacity;
 
         private const float PositionScale = 0.05f;
         private const float VelocityScale = 0.1f;
 
         private readonly Dictionary<int, int> previousEnemyHp = new Dictionary<int, int>();
+        private readonly BossStateRegistry bossStateRegistry = new BossStateRegistry();
+
+        private const int BossMissingFramesToConfirmDeath = 8;
 
         private int previousHeroHealth = -1;
         private int initialEnemyTotalHp;
         private int lastTargetId;
+        private int emptyEnemyFrames;
         private int episodeSteps;
 
         public int EpisodeSteps => episodeSteps;
@@ -38,6 +45,7 @@ namespace HollowKnightRLBridge
             previousHeroHealth = ReadHeroHealth();
             initialEnemyTotalHp = 0;
             lastTargetId = 0;
+            emptyEnemyFrames = 0;
             episodeSteps = 0;
 
             EnemyReadout readout = ReadEnemies();
@@ -73,8 +81,9 @@ namespace HollowKnightRLBridge
             int bossDamage,
             int heroDelta)
         {
-            float[] observation = BuildObservation(availability, actionMask, lastAction, enemies, done, bossDamage, heroDelta);
-            Dictionary<string, object> info = BuildInfo(availability, actionMask, lastAction, enemies, bossDamage, heroDelta);
+            BossStateReadout bossState = bossStateRegistry.Read();
+            float[] observation = BuildObservation(availability, actionMask, lastAction, enemies, done, bossDamage, heroDelta, bossState);
+            Dictionary<string, object> info = BuildInfo(availability, actionMask, lastAction, enemies, bossDamage, heroDelta, bossState);
 
             return new RLStepResult
             {
@@ -92,7 +101,8 @@ namespace HollowKnightRLBridge
             EnemyReadout enemies,
             bool done,
             int bossDamage,
-            int heroDelta)
+            int heroDelta,
+            BossStateReadout bossState)
         {
             float[] obs = new float[ObservationSize];
             HeroController hero = HeroController.instance;
@@ -168,11 +178,19 @@ namespace HollowKnightRLBridge
             obs[44] = heroDelta * 0.1f;
             obs[45] = Bool(done);
             obs[46] = Bool(pd != null && pd.health <= 0);
-            obs[47] = Bool(enemies.WasTracked && enemies.Count == 0);
+            obs[47] = Bool(IsBossDead(enemies, pd != null && pd.health <= 0));
 
             for (int i = 0; i < RLActionSpace.ActionCount; i++)
             {
-                obs[FeatureCount + i] = actionMask != null && i < actionMask.Length && actionMask[i] ? 1f : 0f;
+                obs[BaseFeatureCount + i] = actionMask != null && i < actionMask.Length && actionMask[i] ? 1f : 0f;
+            }
+
+            if (bossState != null && bossState.FeatureVector != null)
+            {
+                for (int i = 0; i < BossFeatureCapacity && i < bossState.FeatureVector.Length; i++)
+                {
+                    obs[BossFeatureOffset + i] = bossState.FeatureVector[i];
+                }
             }
 
             return obs;
@@ -184,19 +202,31 @@ namespace HollowKnightRLBridge
             int lastAction,
             EnemyReadout enemies,
             int bossDamage,
-            int heroDelta)
+            int heroDelta,
+            BossStateReadout bossState)
         {
             PlayerData pd = PlayerData.instance;
             GameManager gm = GameManager.instance;
             HeroController hero = HeroController.instance;
             bool heroDead = pd != null && pd.health <= 0;
-            bool bossDead = enemies.WasTracked && enemies.Count == 0;
+            bool bossDead = IsBossDead(enemies, heroDead);
+            int bossFeatureCount = bossState != null ? bossState.FeatureCount : 0;
             Dictionary<string, object> info = new Dictionary<string, object>
             {
                 ["scene"] = gm != null ? gm.sceneName : string.Empty,
                 ["episode_steps"] = episodeSteps,
                 ["observation_size"] = ObservationSize,
-                ["feature_count"] = FeatureCount,
+                ["feature_count"] = BaseFeatureCount + bossFeatureCount,
+                ["base_feature_count"] = BaseFeatureCount,
+                ["action_mask_feature_offset"] = BaseFeatureCount,
+                ["boss_feature_offset"] = BossFeatureOffset,
+                ["boss_feature_capacity"] = BossFeatureCapacity,
+                ["boss_feature_count"] = bossFeatureCount,
+                ["boss_profile"] = bossState != null ? bossState.ProviderId : "default",
+                ["boss_profile_name"] = bossState != null ? bossState.DisplayName : "Default",
+                ["boss_feature_names"] = bossState != null ? bossState.FeatureNames : new string[0],
+                ["boss_features"] = bossState != null ? bossState.ActiveFeatures : new float[0],
+                ["boss_feature_vector"] = bossState != null ? bossState.FeatureVector : new float[BossFeatureCapacity],
                 ["action_count"] = RLActionSpace.ActionCount,
                 ["action_names"] = RLActionSpace.Names,
                 ["action_mask"] = actionMask,
@@ -235,6 +265,14 @@ namespace HollowKnightRLBridge
                 ["boss_damage"] = bossDamage,
                 ["hero_delta"] = heroDelta
             };
+
+            if (bossState != null && bossState.Info != null)
+            {
+                foreach (KeyValuePair<string, object> pair in bossState.Info)
+                {
+                    info[pair.Key] = pair.Value;
+                }
+            }
 
             return info;
         }
@@ -335,10 +373,6 @@ namespace HollowKnightRLBridge
                         damage += pair.Value - hp;
                     }
                 }
-                else if (pair.Value > 0)
-                {
-                    damage += pair.Value;
-                }
             }
 
             previousEnemyHp.Clear();
@@ -359,13 +393,35 @@ namespace HollowKnightRLBridge
         {
             PlayerData pd = PlayerData.instance;
             bool heroDead = pd != null && pd.health <= 0;
-            bool bossDead = enemies.WasTracked && enemies.Count == 0;
+            if (enemies.Count > 0)
+            {
+                emptyEnemyFrames = 0;
+            }
+            else if (enemies.WasTracked && initialEnemyTotalHp > 0)
+            {
+                emptyEnemyFrames++;
+            }
+            else
+            {
+                emptyEnemyFrames = 0;
+            }
+
+            bool bossDead = IsBossDead(enemies, heroDead);
             return new DoneReadout
             {
                 HeroDead = heroDead,
                 BossDead = bossDead,
                 Done = heroDead || bossDead
             };
+        }
+
+        private bool IsBossDead(EnemyReadout enemies, bool heroDead)
+        {
+            return !heroDead
+                && enemies.WasTracked
+                && initialEnemyTotalHp > 0
+                && enemies.Count == 0
+                && emptyEnemyFrames >= BossMissingFramesToConfirmDeath;
         }
 
         private void PrimeEnemyBaselines(EnemyReadout readout)

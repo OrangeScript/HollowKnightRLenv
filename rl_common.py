@@ -26,6 +26,7 @@ def reward_weights_from_args(args: Any) -> Dict[str, float]:
 
 def make_hk_env(
     *,
+    boss_profile: Optional[str],
     boss_scene: Optional[str],
     entry_gate: Optional[str],
     host: str,
@@ -40,6 +41,7 @@ def make_hk_env(
         env = HollowKnightBossEnv(
             host=host,
             port=port,
+            boss_profile=boss_profile,
             boss_scene=boss_scene,
             entry_gate=entry_gate,
             step_frames=step_frames,
@@ -64,6 +66,7 @@ def make_hk_env(
 
 def make_vec_env(
     *,
+    boss_profile: Optional[str],
     boss_scene: Optional[str],
     entry_gate: Optional[str],
     host: str,
@@ -81,6 +84,7 @@ def make_vec_env(
     env = DummyVecEnv(
         [
             make_hk_env(
+                boss_profile=boss_profile,
                 boss_scene=boss_scene,
                 entry_gate=entry_gate,
                 host=host,

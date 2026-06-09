@@ -1,4 +1,5 @@
 import argparse
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
@@ -6,10 +7,15 @@ from typing import Any, Dict
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList, CheckpointCallback
 
+from boss_profiles import list_boss_profiles, resolve_boss_profile
 from rl_common import find_vecnormalize_path, make_vec_env, reward_weights_from_args, write_json
 
 
 class HollowKnightInfoCallback(BaseCallback):
+    def __init__(self, boss_profile: Any):
+        super().__init__()
+        self.boss_profile = resolve_boss_profile(boss_profile)
+
     def _on_step(self) -> bool:
         infos = self.locals.get("infos", [])
         if not infos:
@@ -29,17 +35,22 @@ class HollowKnightInfoCallback(BaseCallback):
             if isinstance(value, (int, float)):
                 self.logger.record(f"hk/{key}", value)
 
-        if info.get("boss_dead"):
-            self.logger.record("hk/boss_dead", 1.0)
-        if info.get("hero_dead"):
-            self.logger.record("hk/hero_dead", 1.0)
+        for key in self.boss_profile.log_keys:
+            value = info.get(key)
+            if isinstance(value, (int, float)):
+                self.logger.record(f"hk/{key}", value)
+
+        self.logger.record("hk/boss_dead", 1.0 if info.get("boss_dead") else 0.0)
+        self.logger.record("hk/hero_dead", 1.0 if info.get("hero_dead") else 0.0)
+        self.logger.record("hk/time_limit", 1.0 if info.get("TimeLimit.truncated") else 0.0)
 
         return True
 
 
-def parse_args():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Train a Hollow Knight boss policy.")
-    parser.add_argument("--boss-scene", default="GG_Hornet_2")
+    parser.add_argument("--boss-profile", choices=list_boss_profiles(), default="hornet")
+    parser.add_argument("--boss-scene", default=None)
     parser.add_argument("--entry-gate", default=None)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9999)
@@ -73,7 +84,7 @@ def parse_args():
     parser.add_argument("--hero-heal-reward", type=float, default=0.25)
     parser.add_argument("--boss-kill-reward", type=float, default=100.0)
     parser.add_argument("--hero-death-penalty", type=float, default=-100.0)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def load_algorithm(algo: str):
@@ -92,7 +103,8 @@ def load_algorithm(algo: str):
 
 def default_run_name(args: Any) -> str:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    scene = args.boss_scene or "current_scene"
+    profile = resolve_boss_profile(args.boss_profile)
+    scene = args.boss_scene or profile.boss_scene or "current_scene"
     return f"{scene}_{args.algo}_{stamp}"
 
 
@@ -116,9 +128,10 @@ def model_kwargs(policy: str, env: Any, args: Any, tensorboard_dir: Path) -> Dic
     }
 
 
-def main():
-    args = parse_args()
+def main(argv=None):
+    args = parse_args(argv)
     algo_cls, policy = load_algorithm(args.algo)
+    boss_profile = resolve_boss_profile(args.boss_profile)
 
     run_name = args.run_name or default_run_name(args)
     run_dir = Path(args.log_dir) / run_name
@@ -134,6 +147,7 @@ def main():
         normalize_path = find_vecnormalize_path(args.resume)
 
     env = make_vec_env(
+        boss_profile=args.boss_profile,
         boss_scene=args.boss_scene,
         entry_gate=args.entry_gate,
         host=args.host,
@@ -150,6 +164,7 @@ def main():
     )
 
     config = vars(args).copy()
+    config["boss_profile_name"] = boss_profile.display_name
     config["reward_weights"] = reward_weights
     config["run_dir"] = str(run_dir)
     config["normalize_path"] = str(normalize_path) if normalize_path else None
@@ -168,7 +183,7 @@ def main():
                 name_prefix=args.algo,
                 save_vecnormalize=not args.no_normalize,
             ),
-            HollowKnightInfoCallback(),
+            HollowKnightInfoCallback(args.boss_profile),
         ]
     )
 
@@ -188,4 +203,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

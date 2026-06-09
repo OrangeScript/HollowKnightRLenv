@@ -19,6 +19,7 @@ namespace HollowKnightRLBridge
 
         private StateReader stateReader;
         private ActionExecutor actionExecutor;
+        private RLDebugOverlay debugOverlay;
         private PendingCommand activeStep;
         private PendingCommand activeReset;
         private int activeFramesRemaining;
@@ -37,6 +38,8 @@ namespace HollowKnightRLBridge
             actionExecutor = new ActionExecutor();
             stateReader.ResetEpisode(false);
             latestSnapshot = MakeSnapshot();
+            debugOverlay = gameObject.AddComponent<RLDebugOverlay>();
+            PublishSnapshot();
         }
 
         private void OnEnable()
@@ -230,6 +233,7 @@ namespace HollowKnightRLBridge
             ActionAvailability availability = actionExecutor.ReadAvailability();
             bool[] mask = RLActionSpace.BuildMask(availability);
             latestSnapshot = stateReader.ReadStepResult(availability, mask, lastAction);
+            PublishSnapshot();
             actionExecutor.Clear();
             finished.Result = latestSnapshot;
             finished.Done.Set();
@@ -256,6 +260,7 @@ namespace HollowKnightRLBridge
         private void CompleteInfo(PendingCommand command)
         {
             latestSnapshot = MakeSnapshot();
+            PublishSnapshot();
             command.Result = latestSnapshot;
             command.Done.Set();
         }
@@ -365,9 +370,18 @@ namespace HollowKnightRLBridge
             latestSnapshot.Info["reset_combat_ready"] = IsCombatReady();
             latestSnapshot.Info["reset_enemy_ready"] = HasLiveEnemy();
             latestSnapshot.Info["reset_hero_arena_ready"] = IsHeroNearBossArena();
+            PublishSnapshot();
 
             command.Result = latestSnapshot;
             command.Done.Set();
+        }
+
+        private void PublishSnapshot()
+        {
+            if (debugOverlay != null)
+            {
+                debugOverlay.SetSnapshot(latestSnapshot);
+            }
         }
 
         private static bool ShouldLoadScene(PendingCommand command)

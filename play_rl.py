@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 
+from boss_profiles import list_boss_profiles
 from rl_common import find_vecnormalize_path, make_vec_env, reward_weights_from_args
 
 
@@ -10,7 +11,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Run a trained Hollow Knight policy.")
     parser.add_argument("--model", required=True)
     parser.add_argument("--vecnormalize", default=None)
-    parser.add_argument("--boss-scene", default="GG_Hornet_2")
+    parser.add_argument("--boss-profile", choices=list_boss_profiles(), default="hornet")
+    parser.add_argument("--boss-scene", default=None)
     parser.add_argument("--entry-gate", default=None)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9999)
@@ -67,6 +69,7 @@ def main():
         print("warning: no VecNormalize stats found; running without observation normalization")
 
     env = make_vec_env(
+        boss_profile=args.boss_profile,
         boss_scene=args.boss_scene,
         entry_gate=args.entry_gate,
         host=args.host,

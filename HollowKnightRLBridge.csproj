@@ -57,12 +57,22 @@
     <Reference Include="UnityEngine.Physics2DModule">
       <HintPath>..\..\..\..\..\SteamLibrary\steamapps\common\Hollow Knight\hollow_knight_Data\Managed\UnityEngine.Physics2DModule.dll</HintPath>
     </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>..\..\..\..\..\SteamLibrary\steamapps\common\Hollow Knight\hollow_knight_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>..\..\..\..\..\SteamLibrary\steamapps\common\Hollow Knight\hollow_knight_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
   </ItemGroup>
   <ItemGroup>
     <Compile Include="ActionDefinitions.cs" />
     <Compile Include="ActionExecutor.cs" />
+    <Compile Include="BossStateProviders.cs" />
     <Compile Include="HollowKnightRL.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="RLDebugOverlay.cs" />
     <Compile Include="RLController.cs" />
     <Compile Include="RLProtocol.cs" />
     <Compile Include="RLServer.cs" />

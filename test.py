@@ -5,11 +5,14 @@ from hk_gym_env import HollowKnightBossEnv
 
 def main():
     boss_scene = sys.argv[1] if len(sys.argv) > 1 else None
-    env = HollowKnightBossEnv(boss_scene=boss_scene)
+    boss_profile = sys.argv[2] if len(sys.argv) > 2 else None
+    env = HollowKnightBossEnv(boss_scene=boss_scene, boss_profile=boss_profile)
     obs, info = env.reset()
     print("obs shape:", obs.shape)
     print("scene:", info.get("scene"))
     print("can_input:", info.get("can_input"))
+    print("boss_profile:", info.get("boss_profile"), info.get("boss_profile_name"))
+    print("boss_features:", info.get("boss_feature_names"), info.get("boss_features"))
     print("target:", info.get("target_name"), info.get("target_hp"))
     print(
         "damage_state:",

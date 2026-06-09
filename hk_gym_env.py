@@ -33,7 +33,7 @@ ACTION_NAMES = [
     "focus_heal",
 ]
 
-OBSERVATION_SIZE = 66
+from boss_profiles import OBSERVATION_SIZE, BossProfile, default_reward, resolve_boss_profile
 
 DEFAULT_REWARD_WEIGHTS = {
     "time": -0.01,
@@ -59,6 +59,7 @@ class HollowKnightBossEnv(gym.Env):
         hard_reset: bool = False,
         boss_scene: Optional[str] = None,
         entry_gate: Optional[str] = None,
+        boss_profile: Optional[Any] = None,
         auto_reset: bool = False,
         reward_fn: Optional[Callable[[Dict[str, Any]], float]] = None,
         reward_weights: Optional[Dict[str, float]] = None,
@@ -73,6 +74,11 @@ class HollowKnightBossEnv(gym.Env):
         self.timeout = float(timeout)
         self.refill_on_reset = bool(refill_on_reset)
         self.hard_reset = bool(hard_reset)
+        self.boss_profile: BossProfile = resolve_boss_profile(boss_profile)
+        if boss_scene is None:
+            boss_scene = self.boss_profile.boss_scene
+        if entry_gate is None:
+            entry_gate = self.boss_profile.entry_gate
         self.boss_scene = boss_scene
         self.entry_gate = entry_gate
         self.reward_fn = reward_fn
@@ -95,7 +101,7 @@ class HollowKnightBossEnv(gym.Env):
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(OBSERVATION_SIZE,),
+            shape=(self.boss_profile.observation_size,),
             dtype=np.float32,
         )
 
@@ -194,9 +200,10 @@ class HollowKnightBossEnv(gym.Env):
         return arr.tolist()
 
     def _decode_step(self, obj: Dict[str, Any]) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
-        obs = np.asarray(obj.get("obs", np.zeros(OBSERVATION_SIZE)), dtype=np.float32)
-        if obs.shape != (OBSERVATION_SIZE,):
-            raise ValueError(f"unexpected observation shape {obs.shape}, expected {(OBSERVATION_SIZE,)}")
+        expected_shape = (self.boss_profile.observation_size,)
+        obs = np.asarray(obj.get("obs", np.zeros(expected_shape)), dtype=np.float32)
+        if obs.shape != expected_shape:
+            raise ValueError(f"unexpected observation shape {obs.shape}, expected {expected_shape}")
 
         terminated = bool(obj.get("done", False))
         truncated = bool(obj.get("truncated", False))
@@ -209,23 +216,10 @@ class HollowKnightBossEnv(gym.Env):
         if self.reward_fn is not None:
             return float(self.reward_fn(info))
 
-        weights = self.reward_weights
-        hero_delta = float(info.get("hero_delta", 0.0))
-        reward = float(weights["time"])
-        reward += float(info.get("boss_damage", 0.0)) * float(weights["boss_damage"])
+        if self.boss_profile is not None:
+            return float(self.boss_profile.reward(info, self.reward_weights))
 
-        if hero_delta < 0:
-            reward += hero_delta * float(weights["hero_damage"])
-        elif hero_delta > 0:
-            reward += hero_delta * float(weights["hero_heal"])
-
-        if bool(info.get("boss_dead", False)):
-            reward += float(weights["boss_kill"])
-
-        if bool(info.get("hero_dead", False)):
-            reward += float(weights["hero_death"])
-
-        return float(reward)
+        return float(default_reward(info, self.reward_weights))
 
     def _request(self, payload: Any) -> Dict[str, Any]:
         self._send(payload)
