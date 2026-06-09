@@ -1,6 +1,6 @@
 import json
 import socket
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import numpy as np
 
@@ -35,6 +35,15 @@ ACTION_NAMES = [
 
 OBSERVATION_SIZE = 66
 
+DEFAULT_REWARD_WEIGHTS = {
+    "time": -0.01,
+    "boss_damage": 0.5,
+    "hero_damage": 10.0,
+    "hero_heal": 0.25,
+    "boss_kill": 100.0,
+    "hero_death": -100.0,
+}
+
 
 class HollowKnightBossEnv(gym.Env):
     metadata = {"render_modes": []}
@@ -43,7 +52,7 @@ class HollowKnightBossEnv(gym.Env):
         self,
         host: str = "127.0.0.1",
         port: int = 9999,
-        action_mode: str = "discrete",
+        action_mode: str = "multidiscrete",
         step_frames: int = 1,
         timeout: float = 20.0,
         refill_on_reset: bool = True,
@@ -51,6 +60,9 @@ class HollowKnightBossEnv(gym.Env):
         boss_scene: Optional[str] = None,
         entry_gate: Optional[str] = None,
         auto_reset: bool = False,
+        use_python_reward: bool = True,
+        reward_fn: Optional[Callable[[Dict[str, Any]], float]] = None,
+        reward_weights: Optional[Dict[str, float]] = None,
         legacy_gym_api: bool = False,
         connect: bool = True,
     ):
@@ -64,6 +76,11 @@ class HollowKnightBossEnv(gym.Env):
         self.hard_reset = bool(hard_reset)
         self.boss_scene = boss_scene
         self.entry_gate = entry_gate
+        self.use_python_reward = bool(use_python_reward)
+        self.reward_fn = reward_fn
+        self.reward_weights = dict(DEFAULT_REWARD_WEIGHTS)
+        if reward_weights:
+            self.reward_weights.update(reward_weights)
         self.legacy_gym_api = bool(legacy_gym_api)
 
         self.conn: Optional[socket.socket] = None
@@ -183,12 +200,36 @@ class HollowKnightBossEnv(gym.Env):
         if obs.shape != (OBSERVATION_SIZE,):
             raise ValueError(f"unexpected observation shape {obs.shape}, expected {(OBSERVATION_SIZE,)}")
 
-        reward = float(obj.get("reward", 0.0))
+        mod_reward = float(obj.get("reward", 0.0))
         terminated = bool(obj.get("done", False))
         truncated = bool(obj.get("truncated", False))
         info = dict(obj.get("info") or {})
+        info["mod_reward"] = mod_reward
+        reward = self._compute_reward(info) if self.use_python_reward else mod_reward
         self.last_info = info
         return obs, reward, terminated, truncated, info
+
+    def _compute_reward(self, info: Dict[str, Any]) -> float:
+        if self.reward_fn is not None:
+            return float(self.reward_fn(info))
+
+        weights = self.reward_weights
+        hero_delta = float(info.get("hero_delta", 0.0))
+        reward = float(weights["time"])
+        reward += float(info.get("boss_damage", 0.0)) * float(weights["boss_damage"])
+
+        if hero_delta < 0:
+            reward += hero_delta * float(weights["hero_damage"])
+        elif hero_delta > 0:
+            reward += hero_delta * float(weights["hero_heal"])
+
+        if bool(info.get("boss_dead", False)):
+            reward += float(weights["boss_kill"])
+
+        if bool(info.get("hero_dead", False)):
+            reward += float(weights["hero_death"])
+
+        return float(reward)
 
     def _request(self, payload: Any) -> Dict[str, Any]:
         self._send(payload)

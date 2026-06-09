@@ -215,6 +215,8 @@ namespace HollowKnightRLBridge
         {
             PlayerData pd = PlayerData.instance;
             GameManager gm = GameManager.instance;
+            bool heroDead = pd != null && pd.health <= 0;
+            bool bossDead = enemies.WasTracked && enemies.Count == 0;
             Dictionary<string, object> info = new Dictionary<string, object>
             {
                 ["scene"] = gm != null ? gm.sceneName : string.Empty,
@@ -235,9 +237,11 @@ namespace HollowKnightRLBridge
                 ["hero_health"] = pd != null ? pd.health : 0,
                 ["hero_max_health"] = pd != null ? pd.maxHealth : 0,
                 ["hero_soul"] = pd != null ? pd.MPCharge : 0,
+                ["hero_dead"] = heroDead,
                 ["boss_count"] = enemies.Count,
                 ["boss_total_hp"] = enemies.TotalHp,
                 ["boss_initial_total_hp"] = initialEnemyTotalHp,
+                ["boss_dead"] = bossDead,
                 ["target_id"] = enemies.TargetId,
                 ["target_name"] = enemies.TargetName ?? string.Empty,
                 ["target_hp"] = enemies.TargetHp,

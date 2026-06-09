@@ -10,7 +10,8 @@ The mod listens on `127.0.0.1:9999`. The Python side sends actions and receives
 - One RL step holds an action for `step_frames` Unity frames, default `1`.
 - Observation size is `66`: 48 state features + 18 action-mask values.
 - The action mask is returned in both `obs[-18:]` and `info["action_mask"]`.
-- `reset` clears the reward baseline and can refill health/soul.
+- The mod returns state and event counters. The Python Gym env computes reward by default.
+- `reset` clears the event baseline and can refill health/soul.
 - `hard_reset=true` asks the game to reload the current scene.
 
 ## Discrete Action Space
@@ -59,11 +60,31 @@ Use:
 ```python
 from hk_gym_env import HollowKnightBossEnv
 
-env = HollowKnightBossEnv(action_mode="multidiscrete", step_frames=1)
+env = HollowKnightBossEnv(step_frames=1)
 obs, info = env.reset()
 
 mask = env.action_mask()
-obs, reward, terminated, truncated, info = env.step(1)
+obs, reward, terminated, truncated, info = env.step([1, 1, 0, 0, 0, 0, 0])
+```
+
+Python reward defaults:
+
+```text
+time penalty: -0.01 per step
+boss damage:  +0.5 * boss_damage
+hero damage:  -10.0 per lost health
+hero heal:    +0.25 per healed mask
+boss dead:    +100
+hero dead:    -100
+```
+
+The mod reward is preserved as `info["mod_reward"]`, but the returned Gym reward is computed in Python by default. Override reward shaping without recompiling the mod:
+
+```python
+def reward_fn(info):
+    return info["boss_damage"] - 5.0 * max(0, -info["hero_delta"])
+
+env = HollowKnightBossEnv(reward_fn=reward_fn)
 ```
 
 Load a boss scene on reset:
@@ -71,7 +92,6 @@ Load a boss scene on reset:
 ```python
 env = HollowKnightBossEnv(
     boss_scene="GG_Hornet_2",
-    action_mode="discrete",
     step_frames=1,
     timeout=20.0,
 )
