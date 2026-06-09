@@ -16,6 +16,8 @@ namespace HollowKnightRLBridge
         private PendingCommand activeStep;
         private PendingCommand activeReset;
         private int activeFramesRemaining;
+        private bool activeStepReadyToComplete;
+        private int activeStepReadyFrame = -1;
         private int sceneReadyFrames;
         private int lastFrame = -1;
         private int lastAction;
@@ -45,12 +47,21 @@ namespace HollowKnightRLBridge
 
         private void Update()
         {
-            TickController();
+            TickController(false);
         }
 
         private void OnHeroUpdate()
         {
-            TickController();
+            TickController(true);
+        }
+
+        private void LateUpdate()
+        {
+            // Finish after the frame's hero update so one-frame inputs are not released before vanilla code reads them.
+            if (activeStepReadyToComplete && activeStepReadyFrame == Time.frameCount)
+            {
+                FinishActiveStep();
+            }
         }
 
         public RLStepResult Step(RLActionFrame actionFrame, int actionId, int frames, int timeoutMs)
@@ -93,14 +104,31 @@ namespace HollowKnightRLBridge
             return WaitForCommand(command, timeoutMs);
         }
 
-        private void TickController()
+        private void TickController(bool allowStepTick)
         {
             if (lastFrame == Time.frameCount)
             {
                 return;
             }
 
+            if (!allowStepTick && HeroController.instance != null && activeStep != null)
+            {
+                return;
+            }
+
+            PendingCommand pending = Peek();
+            if (!allowStepTick && HeroController.instance != null && activeStep == null && activeReset == null && pending != null && pending.Type == RLCommandType.Step)
+            {
+                return;
+            }
+
             lastFrame = Time.frameCount;
+
+            if (activeStepReadyToComplete && activeStepReadyFrame < Time.frameCount)
+            {
+                FinishActiveStep();
+                return;
+            }
 
             if (activeStep != null)
             {
@@ -151,6 +179,8 @@ namespace HollowKnightRLBridge
         {
             activeStep = command;
             activeFramesRemaining = Mathf.Clamp(command.Frames, 1, 60);
+            activeStepReadyToComplete = false;
+            activeStepReadyFrame = -1;
             lastAction = command.ActionId;
 
             actionExecutor.BeginAction(command.ActionFrame);
@@ -159,6 +189,11 @@ namespace HollowKnightRLBridge
 
         private void TickActiveStep()
         {
+            if (activeStepReadyToComplete)
+            {
+                return;
+            }
+
             actionExecutor.Tick();
             activeFramesRemaining--;
 
@@ -167,13 +202,29 @@ namespace HollowKnightRLBridge
                 return;
             }
 
+            activeStepReadyToComplete = true;
+            activeStepReadyFrame = Time.frameCount;
+        }
+
+        private void FinishActiveStep()
+        {
+            if (activeStep == null)
+            {
+                activeStepReadyToComplete = false;
+                activeStepReadyFrame = -1;
+                return;
+            }
+
             PendingCommand finished = activeStep;
             activeStep = null;
-            actionExecutor.Clear();
+            activeFramesRemaining = 0;
+            activeStepReadyToComplete = false;
+            activeStepReadyFrame = -1;
 
             ActionAvailability availability = actionExecutor.ReadAvailability();
             bool[] mask = RLActionSpace.BuildMask(availability);
             latestSnapshot = stateReader.ReadStepResult(availability, mask, lastAction);
+            actionExecutor.Clear();
             finished.Result = latestSnapshot;
             finished.Done.Set();
 
@@ -187,6 +238,8 @@ namespace HollowKnightRLBridge
         {
             activeStep = null;
             activeFramesRemaining = 0;
+            activeStepReadyToComplete = false;
+            activeStepReadyFrame = -1;
             lastAction = 0;
             actionExecutor.Clear();
 
@@ -403,6 +456,19 @@ namespace HollowKnightRLBridge
             }
         }
 
+        private PendingCommand Peek()
+        {
+            lock (lockObj)
+            {
+                if (commandQueue.Count == 0)
+                {
+                    return null;
+                }
+
+                return commandQueue.Peek();
+            }
+        }
+
         private RLStepResult WaitForCommand(PendingCommand command, int timeoutMs)
         {
             timeoutMs = Mathf.Clamp(timeoutMs, 100, 60000);
@@ -436,6 +502,8 @@ namespace HollowKnightRLBridge
                 activeStep.Error = error;
                 activeStep.Done.Set();
                 activeStep = null;
+                activeStepReadyToComplete = false;
+                activeStepReadyFrame = -1;
             }
 
             if (activeReset != null)

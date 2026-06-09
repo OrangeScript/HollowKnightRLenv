@@ -47,6 +47,14 @@ Important semantics:
 - `focus_heal` is the heal/focus hold action.
 - If the hero dies, the mod starts a scene reload for the active boss scene to avoid vanilla death/respawn corrupting a training episode.
 
+## Frame Timing
+
+`step_frames` is counted in Unity game frames, using `Time.frameCount` on the mod side. The bridge does not currently force `Application.targetFrameRate`, `QualitySettings.vSyncCount`, or `Time.fixedDeltaTime`.
+
+With `step_frames=1`, an action is injected during the hero update phase, kept through the frame so vanilla input code can read it, then the result is returned after that frame in `LateUpdate`. At 60 FPS this is roughly 16.7 ms per environment step; at 30 FPS it is roughly 33.3 ms.
+
+For training, prefer a stable game frame rate. Lock the game externally to 60 FPS first, and do not change Unity physics timestep unless you have a specific reason.
+
 ## Python
 
 Install:
